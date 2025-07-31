@@ -28,6 +28,19 @@ export async function POST(req) {
       return NextResponse.json({ error: 'fileName and fileData are required' }, { status: 400 });
     }
 
+    // Check file size (base64 is ~33% larger than original)
+    const base64Size = fileData.length;
+    const estimatedOriginalSize = Math.floor(base64Size * 0.75);
+    const maxSize = 45 * 1024 * 1024; // 45MB limit for Vercel
+
+    if (estimatedOriginalSize > maxSize) {
+      return NextResponse.json({ 
+        error: `File too large. Maximum size is ${Math.floor(maxSize / 1024 / 1024)}MB. Your file is approximately ${Math.floor(estimatedOriginalSize / 1024 / 1024)}MB.`,
+        fileSize: estimatedOriginalSize,
+        maxSize: maxSize
+      }, { status: 413 });
+    }
+
     // Generate a unique filename to prevent conflicts
     const timestamp = Date.now();
     const uniqueFileName = `${timestamp}-${fileName}`;

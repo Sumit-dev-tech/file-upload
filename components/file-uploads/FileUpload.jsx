@@ -120,6 +120,11 @@ const FileUpload = () => {
 
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({ error: 'Failed to upload file' }));
+          
+          if (res.status === 413) {
+            throw new Error(errorData.error || 'File too large. Maximum size is 45MB.');
+          }
+          
           throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
         }
 
