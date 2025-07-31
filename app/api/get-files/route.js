@@ -6,34 +6,26 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_SERVICE_KEY 
 );
 
-export async function POST(req) {
+export async function GET(req) {
   try {
-    const body = await req.json();
-    const { file_url, file_name, file_size } = body;
-    
-    console.log('Received data:', { file_url, file_name, file_size });
-
+    // Fetch all uploaded files from database
     const { data, error } = await supabase
       .from('file_upload')
-      .insert({ 
-        file_url: file_url,
-        file_name: file_name,
-        file_size: file_size
-      })
-      .select();
+      .select('*')
+      .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Database insert error:', error);
+      console.error('Database fetch error:', error);
       return NextResponse.json({ 
-        error: `Insert failed: ${error.message}`,
+        error: `Fetch failed: ${error.message}`,
         details: error
       }, { status: 500 });
     }
 
-    console.log('Successfully saved:', data);
+    console.log('Successfully fetched files:', data);
     return NextResponse.json({ 
-      message: 'File URL saved successfully',
-      data: data[0]
+      files: data || [],
+      count: data?.length || 0
     });
   } catch (err) {
     console.error('API error:', err);
@@ -42,4 +34,4 @@ export async function POST(req) {
       stack: err.stack
     }, { status: 500 });
   }
-}
+} 

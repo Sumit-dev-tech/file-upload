@@ -4,9 +4,11 @@ import Image from 'next/image';
 
 const FileUpload = () => {
   const [files, setFiles] = useState([]);
+  const [uploadedFiles, setUploadedFiles] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({});
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = useCallback((selectedFiles) => {
@@ -62,18 +64,63 @@ const FileUpload = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // Function to get secure file access URL
-  const getSecureFileUrl = async (filePath, fileName) => {
+  // Function to get file icon based on file type
+  const getFileIcon = (fileName, fileType) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    // ZIP files
+    if (extension === 'zip' || fileType === 'application/zip') {
+      return (
+        <svg className="w-6 h-6 text-orange-500" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+      );
+    }
+    
+    // PDF files
+    if (extension === 'pdf' || fileType === 'application/pdf') {
+      return (
+        <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/>
+        </svg>
+      );
+    }
+    
+    // Image files
+    if (fileType.startsWith('image/')) {
+      return (
+        <svg className="w-6 h-6 text-green-500" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+        </svg>
+      );
+    }
+    
+    // Default file icon
+    return (
+      <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+    );
+  };
+
+  // Function to download file
+  const downloadFile = async (fileUrl, fileName) => {
     try {
-      const response = await fetch(`/api/serve-file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}`);
-      if (!response.ok) {
-        throw new Error('Failed to get secure file URL');
-      }
-      const { signedUrl } = await response.json();
-      return signedUrl;
+      const response = await fetch(fileUrl);
+      if (!response.ok) throw new Error('Failed to download file');
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error getting secure file URL:', error);
-      return null;
+      console.error('Download error:', error);
+      alert(`Failed to download ${fileName}: ${error.message}`);
     }
   };
 
@@ -141,7 +188,8 @@ const FileUpload = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
               file_url: publicUrl,
-              file_name: file.name 
+              file_name: file.name,
+              file_size: file.size
             }),
           });
 
@@ -157,6 +205,21 @@ const FileUpload = () => {
           } else {
             const result = await saveRes.json();
             console.log('File URL saved to database successfully:', result);
+            
+            // Add to uploaded files list and refresh the list
+            setUploadedFiles(prev => [...prev, {
+              id: file.id,
+              name: file.name,
+              size: file.size,
+              type: file.type,
+              url: publicUrl,
+              uploadedAt: new Date().toISOString()
+            }]);
+            
+            // Refresh the files list to show the latest data
+            setTimeout(() => {
+              fetchAllFiles();
+            }, 1000);
           }
         } catch (saveError) {
           console.warn('Error saving file URL to database:', saveError.message);
@@ -170,8 +233,77 @@ const FileUpload = () => {
     }
   
     setIsUploading(false);
+    // Clear selected files after successful upload
+    setFiles([]);
   };
   
+
+  // Function to fetch all uploaded files from database
+  const fetchAllFiles = async () => {
+    setIsLoadingFiles(true);
+    try {
+      const response = await fetch('/api/get-files');
+      if (!response.ok) {
+        throw new Error('Failed to fetch files');
+      }
+      
+      const { files } = await response.json();
+      
+      // Transform database files to match our uploaded files format
+      const transformedFiles = files.map(dbFile => ({
+        id: dbFile.id || Math.random().toString(36).substr(2, 9),
+        name: dbFile.file_name,
+        url: dbFile.file_url,
+        uploadedAt: dbFile.created_at,
+        // Try to determine file type from filename
+        type: getFileTypeFromName(dbFile.file_name),
+        // Get file size from database
+        size: dbFile.file_size || 0
+      }));
+      
+      setUploadedFiles(transformedFiles);
+      console.log('Fetched files from database:', transformedFiles);
+    } catch (error) {
+      console.error('Error fetching files:', error);
+      alert('Failed to load uploaded files: ' + error.message);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  // Function to determine file type from filename
+  const getFileTypeFromName = (fileName) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    switch (extension) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'zip':
+        return 'application/zip';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'doc':
+        return 'application/msword';
+      case 'docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'xls':
+        return 'application/vnd.ms-excel';
+      case 'xlsx':
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      default:
+        return 'application/octet-stream';
+    }
+  };
+
+  // Load files when component mounts
+  React.useEffect(() => {
+    fetchAllFiles();
+  }, []);
 
   const openFileDialog = () => {
     fileInputRef.current?.click();
@@ -268,19 +400,7 @@ const FileUpload = () => {
                         </div>
                       ) : (
                         <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center">
-                          <svg
-                            className="w-6 h-6 text-gray-500"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                            />
-                          </svg>
+                          {getFileIcon(file.name, file.type)}
                         </div>
                       )}
                     </div>
@@ -387,6 +507,93 @@ const FileUpload = () => {
               </div>
             </div>
           )}
+
+          {/* Uploaded Files List */}
+          <div className="mt-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">
+                All Uploaded Files ({uploadedFiles.length})
+              </h3>
+              <button
+                onClick={fetchAllFiles}
+                disabled={isLoadingFiles}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center space-x-2"
+              >
+                {isLoadingFiles ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Refresh
+                  </>
+                )}
+              </button>
+            </div>
+            
+            {uploadedFiles.length > 0 ? (
+              <div className="space-y-3">
+                {uploadedFiles.map((uploadedFile) => (
+                  <div
+                    key={uploadedFile.id}
+                    className="flex items-center p-4 bg-green-50 rounded-lg border border-green-200"
+                  >
+                    {/* File Icon */}
+                    <div className="flex-shrink-0 mr-4">
+                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                        {getFileIcon(uploadedFile.name, uploadedFile.type)}
+                      </div>
+                    </div>
+
+                    {/* File Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {uploadedFile.name}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {formatFileSize(uploadedFile.size)} • Uploaded {new Date(uploadedFile.uploadedAt).toLocaleDateString()}
+                      </p>
+                    </div>
+
+                    {/* Download Button */}
+                    <button
+                      onClick={() => downloadFile(uploadedFile.url, uploadedFile.name)}
+                      className="flex-shrink-0 ml-4 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      Download
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="mt-2">No files uploaded yet</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
