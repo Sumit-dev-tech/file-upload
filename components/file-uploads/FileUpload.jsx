@@ -95,40 +95,35 @@ const FileUpload = () => {
       try {
         setUploadProgress((prev) => ({ ...prev, [file.id]: 10 }));
         
-        // Convert file to base64 for server proxy upload
-        const reader = new FileReader();
-        const fileDataPromise = new Promise((resolve, reject) => {
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-        });
-        reader.readAsDataURL(file.file);
-        
-        const fileData = await fileDataPromise;
-        
-        setUploadProgress((prev) => ({ ...prev, [file.id]: 30 }));
-
-                                                  // Upload file through server proxy (signed URL never exposed to client)
+        // Get signed upload URL from Next.js API
         const res = await fetch('/api/upload-file', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            fileName: file.name,
-            fileData: fileData,
-            fileType: file.type
-          }),
+          body: JSON.stringify({ fileName: file.name }),
         });
 
         if (!res.ok) {
-          const errorData = await res.json().catch(() => ({ error: 'Failed to upload file' }));
-          
-          if (res.status === 413) {
-            throw new Error(errorData.error || 'File too large. Maximum size is 45MB.');
-          }
-          
+          const errorData = await res.json().catch(() => ({ error: 'Failed to get upload URL' }));
           throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
         }
 
-        const { publicUrl } = await res.json();
+        const { signedUrl, publicUrl } = await res.json();
+
+        console.log('Signed URL (for direct upload):', signedUrl);
+        console.log('Public URL (for database storage):', publicUrl);
+        
+        setUploadProgress((prev) => ({ ...prev, [file.id]: 30 }));
+
+        // Upload file directly to Supabase using the signed URL
+        const uploadRes = await fetch(signedUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type },
+          body: file.file,
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+        }
 
         setUploadProgress((prev) => ({ ...prev, [file.id]: 100 }));
 
