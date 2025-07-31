@@ -95,42 +95,42 @@ const FileUpload = () => {
       try {
         setUploadProgress((prev) => ({ ...prev, [file.id]: 10 }));
         
-        // Convert file to base64 for server-side upload
-        const reader = new FileReader();
-        const fileDataPromise = new Promise((resolve, reject) => {
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-        });
-        reader.readAsDataURL(file.file);
-        
-        const fileData = await fileDataPromise;
-        
-        setUploadProgress((prev) => ({ ...prev, [file.id]: 30 }));
-
-        // Upload file through our secure server-side API
+        // Get signed upload URL from Next.js API
         const res = await fetch('/api/upload-file', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            fileName: file.name,
-            fileData: fileData,
-            fileType: file.type
-          }),
+          body: JSON.stringify({ fileName: file.name }),
         });
 
         if (!res.ok) {
-          const errorData = await res.json().catch(() => ({ error: 'Failed to upload file' }));
+          const errorData = await res.json().catch(() => ({ error: 'Failed to get upload URL' }));
           throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
         }
 
-        const { publicUrl } = await res.json();
+        const { signedUrl, publicUrl } = await res.json();
+
+        console.log('Signed URL (for direct upload):', signedUrl);
+        console.log('Public URL (for database storage):', publicUrl);
+        
+        setUploadProgress((prev) => ({ ...prev, [file.id]: 30 }));
+
+        // Upload file directly to Supabase using the signed URL
+        const uploadRes = await fetch(signedUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type },
+          body: file.file,
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+        }
 
         setUploadProgress((prev) => ({ ...prev, [file.id]: 100 }));
 
         console.log('File uploaded successfully!');
-        console.log('Storing this URL in database:', publicUrl);
+        console.log('Storing clean URL in database:', publicUrl);
 
-        // Save public URL to database (no tokens in this URL)
+        // Save clean public URL to database (no tokens in this URL)
         try {
           const saveRes = await fetch('/api/file-save', {
             method: 'POST',
