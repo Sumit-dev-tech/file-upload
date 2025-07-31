@@ -104,10 +104,14 @@ const FileUpload = () => {
 
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({ error: 'Failed to get upload URL' }));
+          console.error('API Error Response:', errorData);
           throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
         }
 
-        const { signedUrl, publicUrl } = await res.json();
+        const responseData = await res.json();
+        console.log('API Response:', responseData);
+        
+        const { signedUrl, publicUrl } = responseData;
 
         console.log('Signed URL (for direct upload):', signedUrl);
         console.log('Public URL (for database storage):', publicUrl);
