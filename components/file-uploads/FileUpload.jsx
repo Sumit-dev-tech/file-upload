@@ -62,6 +62,21 @@ const FileUpload = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Function to get secure file access URL
+  const getSecureFileUrl = async (filePath, fileName) => {
+    try {
+      const response = await fetch(`/api/serve-file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}`);
+      if (!response.ok) {
+        throw new Error('Failed to get secure file URL');
+      }
+      const { signedUrl } = await response.json();
+      return signedUrl;
+    } catch (error) {
+      console.error('Error getting secure file URL:', error);
+      return null;
+    }
+  };
+
   const simulateUpload = async (fileId) => {
     setUploadProgress(prev => ({ ...prev, [fileId]: 0 }));
     
@@ -80,51 +95,48 @@ const FileUpload = () => {
       try {
         setUploadProgress((prev) => ({ ...prev, [file.id]: 10 }));
         
-        // Get signed upload URL from Next.js API
-        const res = await fetch('/api/upload-file', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName: file.name }),
+        // Convert file to base64 for server-side upload
+        const reader = new FileReader();
+        const fileDataPromise = new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
         });
-
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({ error: 'Failed to get upload URL' }));
-          throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
-        }
-
-        const { signedUrl, publicUrl } = await res.json();
-
-        console.log('Signed URL:', signedUrl);
+        reader.readAsDataURL(file.file);
+        
+        const fileData = await fileDataPromise;
         
         setUploadProgress((prev) => ({ ...prev, [file.id]: 30 }));
 
-        // Upload file to Supabase directly using the signed URL
-        const uploadRes = await fetch(signedUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': file.type },
-          body: file.file,
+        // Upload file through our secure server-side API
+        const res = await fetch('/api/upload-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            fileName: file.name,
+            fileData: fileData,
+            fileType: file.type
+          }),
         });
 
-        if (!uploadRes.ok) {
-          throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({ error: 'Failed to upload file' }));
+          throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
         }
+
+        const { publicUrl } = await res.json();
 
         setUploadProgress((prev) => ({ ...prev, [file.id]: 100 }));
 
-        console.log('Uploaded:', publicUrl); // Save/display this permanent URL
-        const uploadUrl = [];
+        console.log('File uploaded successfully!');
+        console.log('Storing this URL in database:', publicUrl);
 
-        uploadUrl.push(publicUrl);
-
-        console.log('Public URL:', uploadUrl);
-
-        // Save file URL to database
+        // Save public URL to database (no tokens in this URL)
         try {
           const saveRes = await fetch('/api/file-save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-              file_url: uploadUrl,
+              file_url: publicUrl,
               file_name: file.name 
             }),
           });
@@ -211,7 +223,7 @@ const FileUpload = () => {
                   </button>
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  Supports: Images, Documents, Videos (Max 10MB per file)
+                  All file types are supported
                 </p>
               </div>
             </div>
@@ -222,7 +234,6 @@ const FileUpload = () => {
               multiple
               onChange={handleFileInputChange}
               className="hidden"
-              accept="image/*,.pdf,.doc,.docx,.txt,.mp4,.mov,.avi"
             />
           </div>
 
